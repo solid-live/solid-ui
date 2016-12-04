@@ -1,23 +1,108 @@
 
 
 ////////////////////////////////////////////////
-
+//
 //   The pad widget
 //
+//   See notepad for the main widget
 
 var $rdf = require('rdflib')
 var padModule = module.exports = {}
 var UI = {
-  icons: require('./iconBase.js'),
+  icons: require('./iconBase'),
   log: require('./log'),
   ns: require('./ns'),
   pad: padModule,
+  rdf: $rdf,
   store: require('./store'),
   utils: require('./utils'),
   widgets: require('./widgets')
 }
 
-padModule.notepad  = function (dom, padDoc, subject, me, options) {
+// Figure out a random color from my webid
+
+UI.pad.lightColorHash = function(author){
+  var hash = function(x){return x.split("").reduce(function(a,b){a=((a<<5)-a)+b.charCodeAt(0);return a&a},0); }
+  return '#' + ((hash(author.uri) & 0xffffff) | 0xc0c0c0).toString(16); // c0c0c0  forces pale
+}
+
+
+// Manage participation in this session
+//
+//  This is more general tham the pad.
+//
+UI.pad.renderPartipants = function(dom, table, padDoc, subject, me, options){
+  var kb = UI.store, ns = UI.ns
+  table.setAttribute('style', 'margin: 0.8em;')
+
+  var newRowForParticpation = function(parp){
+    var person = kb.any(parp, ns.wf('participant'))
+    var bg = kb.anyValue(parp, ns.ui('backgroundColor')) || 'white'
+
+    var block = dom.createElement('div')
+    block.setAttribute('style','height: 1.5em; width: 1.5em; margin: 0.3em; border 0.01em solid #888; background-color: ' + bg)
+    var tr = UI.widgets.personTR(dom, null, person, options)
+    table.appendChild(tr)
+    var td = dom.createElement('td')
+    td.setAttribute('style', 'vertical-align: middle;')
+    td.appendChild(block)
+    tr.insertBefore(td, tr.firstChild)
+    return tr
+  }
+
+  var syncTable = function(){
+    var parps = kb.each(subject, ns.wf('participation')).map(function(parp){
+      return [ kb.anyValue(parp, UI.ns.cal('dtstart'))  || '9999-12-31', parp]
+    })
+    parps.sort() // List in order of joining
+    var participations = parps.map(function(p){return p[1]})
+    UI.utils.syncTableToArray(table, participations, newRowForParticpation)
+  }
+  table.refresh = syncTable
+  syncTable()
+  return table
+}
+
+// Record my participation and display participants
+//
+UI.pad.manageParticipation = function(dom, container, padDoc, subject, me, options) {
+  if (!me) throw "Unknown user";
+  var kb = UI.store, ns = UI.ns
+
+  var table = dom.createElement('table')
+  container.appendChild(table)
+
+  var parps = kb.each(subject, ns.wf('participation')).filter(function(pn){
+      return kb.holds(pn, ns.wf('participant'), me)});
+  if (parps.length > 1) {
+    container.appendChild(UI.widgets.errorMessageBlock(dom, "Multiple notes of my participation!")) // Clean up?
+    //throw "Multiple my participations";
+  }
+  if (!parps.length) {
+    var participation = UI.widgets.newThing(padDoc);
+    var ins = [
+      UI.rdf.st(subject,  ns.wf('participation'), participation, padDoc),
+
+      UI.rdf.st(participation,  ns.wf('participant'), me, padDoc),
+      UI.rdf.st(participation,  UI.ns.cal('dtstart'), new Date(), padDoc),
+      UI.rdf.st(participation, ns.ui('backgroundColor'), UI.pad.lightColorHash(me), padDoc)
+    ]
+    kb. updater.update([], ins, function(uri, ok, error_body, xhr){
+      if (!ok) {
+        console.log(container.textContent = 'Error recording your partipation: ' + error_body)
+        return
+      }
+      UI.pad.renderPartipants(dom, table, padDoc, subject, me, options)
+    })
+  } else {
+    UI.pad.renderPartipants(dom, table, padDoc, subject, me, options)
+  }
+  return table // won't be set up yet
+}
+
+
+
+UI.pad.notepad  = function (dom, padDoc, subject, me, options) {
     options = options || {}
     var exists = options.exists;
     var table = dom.createElement('table');
@@ -74,8 +159,9 @@ padModule.notepad  = function (dom, padDoc, subject, me, options) {
 
         var author = kb.any(chunk, ns.dc('author'));
         if (!colors && author) { // Hash the user webid for now -- later allow user selection!
-            var hash = function(x){return x.split("").reduce(function(a,b){a=((a<<5)-a)+b.charCodeAt(0);return a&a},0); }
-            var bgcolor = '#' + ((hash(author.uri) & 0xffffff) | 0xc0c0c0).toString(16); // c0c0c0  forces pale
+            var bgcolor = UI.pad.lightColorHash(author)
+            // var hash = function(x){return x.split("").reduce(function(a,b){a=((a<<5)-a)+b.charCodeAt(0);return a&a},0); }
+            // var bgcolor = '#' + ((hash(author.uri) & 0xffffff) | 0xc0c0c0).toString(16); // c0c0c0  forces pale
             colors = 'color: ' + (pending ? '#888' : 'black') +'; background-color: ' + bgcolor + ';'
         }
 
@@ -118,7 +204,7 @@ padModule.notepad  = function (dom, padDoc, subject, me, options) {
             } else if (xhr.status === 409) { // Conflict
                 setPartStyle(part,'color: black;  background-color: #ffd;'); // yellow
                 part.state = 0; // Needs downstream refresh
-                UI.widgets.beep(0.5, 512); // Ooops clash with other person
+                UI.utils.beep(0.5, 512); // Ooops clash with other person
                 setTimeout(function(){
                     updater.requestDownstreamAction(padDoc, reloadAndSync);
                 }, 1000);
@@ -280,7 +366,7 @@ padModule.notepad  = function (dom, padDoc, subject, me, options) {
                     if (xhr.status === 409) { // Conflict -  @@ we assume someone else
                         setPartStyle(part,'color: black;  background-color: #fdd;');
                         part.state = 0; // Needs downstream refresh
-                        UI.widgets.beep(0.5, 512); // Ooops clash with other person
+                        UI.utils.beep(0.5, 512); // Ooops clash with other person
                         setTimeout(function(){
                             updater.requestDownstreamAction(padDoc, reloadAndSync);
                         }, 1000);
@@ -289,7 +375,7 @@ padModule.notepad  = function (dom, padDoc, subject, me, options) {
                         setPartStyle(part,'color: black;  background-color: #fdd;'); // failed pink
                         part.state = 0;
                         complain("    Error " + xhr.status + " sending data: " + error_body, true);
-                        UI.widgets.beep(1.0, 128); // Other
+                        UI.utils.beep(1.0, 128); // Other
                         // @@@   Do soemthing more serious with other errors eg auth, etc
                     }
                 } else {

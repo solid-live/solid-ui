@@ -8,10 +8,10 @@ var utilsModule = module.exports = {}
 
 var UI = {
   utils: utilsModule,
-  log: require('./log.js'),
-  ns: require('./ns.js'),
+  log: require('./log'),
+  ns: require('./ns'),
   rdf: require('rdflib'),
-  store: require('./store.js')
+  store: require('./store')
 }
 
 // Make pseudorandom color from a uri
@@ -29,6 +29,48 @@ UI.utils.gen_uuid = function () { // http://stackoverflow.com/questions/105034/c
 }
 
 
+// Sync a DOM table with an array of things
+//
+// table - will have a tr for each thing
+// things - ORDERED array of NamedNode objects
+// createNewRow(thing) returns a TR table row for that thing
+//
+UI.utils.syncTableToArray = function(table, things, createNewRow){
+  var foundOne, row
+
+  for (i = 0; i < table.children.length; i++) {
+    row = table.children[i]
+    row.trashMe = true
+  }
+
+  for (var g = 0; g < things.length; g++) {
+    var thing = things[g]
+    foundOne = false
+
+    for (var i = 0; i < table.children.length; i++) {
+      var row = table.children[i]
+      if (row.subject && row.subject.sameTerm(thing)) {
+        row.trashMe = false
+        foundOne = true
+        break
+      }
+    }
+    if (!foundOne) {
+      var newRow = createNewRow(thing)
+      table.appendChild(newRow)
+      newRow.subject = thing
+      // UI.widgets.makeDraggable(newRow, thing)
+    } // if not foundOne
+  } // loop g
+
+  for (i = 0; i < table.children.length; i++) {
+    var row = table.children[i]
+    if (row.trashMe) {
+      table.removeChild(row)
+    }
+  }
+} // syncTableToArray
+
 // http://stackoverflow.com/questions/879152/how-do-i-make-javascript-beep
 // http://www.tsheffler.com/blog/2013/05/14/audiocontext-noteonnoteoff-and-time-units/
 
@@ -44,7 +86,7 @@ if (UI.utils.audioContext) {
         var ctx = new(UI.utils.audioContext)
         return function (duration, frequency, type, finishedCallback) {
 
-            duration = + (duration | 0.3)
+            duration = + (duration || 0.3)
 
             // Only 0-4 are valid types.
             type = type || 'sine'; // sine, square, sawtooth, triangle

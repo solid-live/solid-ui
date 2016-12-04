@@ -5,7 +5,7 @@ var Solid = require('solid-client');
 
 
 var UI = {
-  icons: require('./iconBase.js'),
+  icons: require('./iconBase'),
   log: require('./log'),
   ns: require('./ns'),
   store: require('./store'),
@@ -89,8 +89,9 @@ UI.widgets.logInLoadProfile = function(context){
     context.me =  uri ? $rdf.sym(uri) : null;
 
     return new Promise(function(resolve, reject){
-        var gotIDChange = function(me) {
-            if (!me) return;
+        var gotIDChange = function(meURI) {
+            if (!meURI) return;
+            var me = $rdf.sym(meURI)
             context.me = me;
             tabulator.preferences.set('me', me.uri)
             UI.store.fetcher.nowOrWhenFetched(me.doc(), undefined, function(ok, body){
@@ -107,7 +108,7 @@ UI.widgets.logInLoadProfile = function(context){
         box = UI.widgets.loginStatusBox(context.dom, gotIDChange);
         context.div.appendChild(box);
         if (context.me){
-            gotIDChange(context.me); // trigger continuation if already set
+            gotIDChange(context.me.uri); // trigger continuation if already set
         }
     });
 }
@@ -380,7 +381,7 @@ UI.widgets.registrationList = function(context, options) {
 UI.widgets.setACLUserPublic = function(docURI, me, options, callback) {
     var genACLtext = function(docURI, aclURI, options) {
         options = options || {}
-        var public = options.public || [];
+        var optPublic = options.public || [];
         var g = $rdf.graph(), auth = $rdf.Namespace('http://www.w3.org/ns/auth/acl#');
         var a = g.sym(aclURI + '#a1'), acl = g.sym(aclURI), doc = g.sym(docURI);
         g.add(a, UI.ns.rdf('type'), auth('Authorization'), acl);
@@ -393,13 +394,13 @@ UI.widgets.setACLUserPublic = function(docURI, me, options, callback) {
         g.add(a, auth('mode'), auth('Write'), acl);
         g.add(a, auth('mode'), auth('Control'), acl);
 
-        if (public.length) {
+        if (optPublic.length) {
             a = g.sym(aclURI + '#a2');
             g.add(a, UI.ns.rdf('type'), auth('Authorization'), acl);
             g.add(a, auth('accessTo'), doc, acl)
             g.add(a, auth('agentClass'), ns.foaf('Agent'), acl);
-            for (var p=0; p<public.length; p++) {
-                g.add(a, auth('mode'), auth(public[p]), acl); // Like 'Read' etc
+            for (var p=0; p<optPublic.length; p++) {
+                g.add(a, auth('mode'), auth(optPublic[p]), acl); // Like 'Read' etc
             }
         }
         return $rdf.serialize(acl, g, aclURI, 'text/turtle');
@@ -470,10 +471,10 @@ UI.widgets.signInOrSignUpBox = function(myDocument, gotOne) {
     but.setAttribute('style', 'padding: 1em; border-radius:0.5em; margin: 2em;')
         but.addEventListener('click', function(e){
         var offline = UI.widgets.offlineTestID();
-        if (offline) return gotOne(offline);
+        if (offline) return gotOne(offline.uri);
 	Solid.auth.login().then(function(uri){
 	    console.log('signInOrSignUpBox logged in up '+ uri)
-	    gotOne($rdf.sym(uri))
+	    gotOne(uri)
 	})
     }, false);
 
@@ -485,7 +486,7 @@ UI.widgets.signInOrSignUpBox = function(myDocument, gotOne) {
     but2.addEventListener('click', function(e){
 	Solid.auth.signup().then(function(uri){
 	    console.log('signInOrSignUpBox signed up '+ uri)
-	    gotOne($rdf.sym(uri))
+	    gotOne(uri)
 	})
     }, false);
     return box;
@@ -495,29 +496,21 @@ UI.widgets.signInOrSignUpBox = function(myDocument, gotOne) {
 //  Check user and set 'me' if found
 
 UI.widgets.checkUserSetMe = function(doc) {
-    return UI.widgets.checkUser(doc, function(uri) {
+    return UI.widgets.checkUser(doc, function(user) {
+        user = user || '' // null means no login
+        var uri = user.uri || user
         var me_uri = tabulator.preferences.get('me');
         if (uri == me_uri) return null;
         var message;
         if (!uri) {
             // message = "(Log in by auth with no URI - ignored)";
-            return;
+            message = "(NOT logged in by authentication.)";
             // This may be happen a http://localhost/ test enviroment
         } else {
             tabulator.preferences.set('me', uri);
             message = "(Logged in as " + uri + " by authentication.)";
         };
         console.log(message)
-        /*
-        try {  // Ugh
-            UI.log.alert(message);
-        } catch(e) {
-            try {
-                alert(message);
-            } catch (e) {
-            };
-        }
-        */
     });
 };
 
@@ -624,23 +617,13 @@ UI.widgets.loginStatusBox = function(myDocument, listener) {
 
     var box = myDocument.createElement('div');
 
-    var setIt = function(newid) {
-        tabulator.preferences.set('me',newid);
-        me_uri = newid;
-        me = me_uri && UI.store.sym(me_uri)
+    var setIt = function(newidURI) {
+        var uri = newidURI.uri || newidURI // Just in case
+        tabulator.preferences.set('me', uri);
+        me = $rdf.sym(uri)
         var message = 'Your Web ID is now ' + me +' .';
-        /*
-        try {
-            UI.log.alert(message);
-        } catch(e) {
-            try {
-                alert(message);
-            } catch (e) {
-            };
-        }
-        */
         box.refresh();
-        if (listener) listener(newid);
+        if (listener) listener(me.uri);
     };
 
     var zapIt = function() {
@@ -704,7 +687,7 @@ UI.widgets.loginStatusBox = function(myDocument, listener) {
 //
 
 // Returns a UI object which, if it selects a workspace,
-// will callback(workspace).
+// will callback(workspace, newBase).
 // If necessary, will get an account, preferences file, etc.
 // In sequence
 //  - If not logged in, log in.
